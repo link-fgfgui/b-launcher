@@ -13,6 +13,8 @@ namespace Modrinth {
 
     const char* projectType(Addons::Kind kind);
     Addons::Kind kindOf(const std::string& projectType);
+    // A project as the row of a search result shows it, from /project/{id or slug}.
+    Addons::Hit hitFrom(const nlohmann::json& project);
     b_launcher_base::result<nlohmann::json> fetchJson(const std::string& url,
                                                       b_launcher_base::cancellation_token token);
     b_launcher_base::result<nlohmann::json> api(const std::string& path, b_launcher_base::cancellation_token token);

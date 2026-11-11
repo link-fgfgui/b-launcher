@@ -5,6 +5,7 @@
 #include "app/accounts/Profiles.h"
 #include "app/downloads/Addons.h"
 #include "app/downloads/DownloadSources.h"
+#include "app/downloads/PluginFeed.h"
 #include "app/downloads/ProjectInstaller.h"
 #include "app/instances/Covers.h"
 #include "app/instances/Drops.h"
@@ -61,6 +62,7 @@ namespace Services {
         Crashes::poll();
         Catalog::poll();
         Addons::poll();
+        PluginFeed::poll();
         ProjectInstaller::poll();
         Installer::poll();
         Mods::poll();
@@ -103,6 +105,7 @@ namespace Services {
         ModManager::shutdown();
         Mods::shutdown();
         Installer::shutdown();
+        PluginFeed::shutdown();
         ProjectInstaller::shutdown();
         Addons::shutdown();
         Catalog::shutdown();

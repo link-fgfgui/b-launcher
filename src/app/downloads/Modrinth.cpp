@@ -352,6 +352,31 @@ namespace Modrinth {
         }
     }
 
+    Addons::Hit hitFrom(const json& item) {
+        Hit hit;
+        hit.id = blb::json_text(item, "id");
+        hit.slug = blb::json_text(item, "slug");
+        hit.title = blb::json_text(item, "title");
+        hit.description = blb::json_text(item, "description");
+        hit.iconUrl = blb::json_text(item, "icon_url");
+        hit.downloads = number(item, "downloads");
+        hit.follows = number(item, "followers");
+        Kind kind = kindOf(blb::json_text(item, "project_type"));
+        hit.pageUrl =
+                std::string("https://modrinth.com/") + projectType(kind) + "/" + (hit.slug.empty() ? hit.id : hit.slug);
+        std::vector<std::string> tags = blb::json_strings(item, "categories");
+        for (const std::string& tag : blb::json_strings(item, "additional_categories")) {
+            tags.push_back(tag);
+        }
+        for (const std::string& tag : tags) {
+            (isLoader(tag) ? hit.loaders : hit.categories).push_back(tag);
+        }
+        if (hit.loaders.empty()) {
+            hit.loaders = blb::json_strings(item, "loaders");
+        }
+        return hit;
+    }
+
     const Results& search(const Query& query) {
         std::string key = queryKey(query);
         searchUse.use(key);
