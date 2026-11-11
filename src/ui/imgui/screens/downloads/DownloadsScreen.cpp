@@ -23,6 +23,7 @@
 #include "ui/imgui/screens/shell/Page.h"
 #include "ui/imgui/screens/shell/Textures.h"
 #include "app/system/Platform.h"
+#include "app/downloads/PluginFeed.h"
 #include "app/downloads/ProjectInstaller.h"
 #include "app/downloads/ProjectBrowser.h"
 
@@ -141,6 +142,10 @@ namespace DownloadsScreen {
         bool started = false;
         bool followed = false;
         ProjectBrowser::Merged shown;
+        // The search the list the browser extension sent belongs to, and the revision it was received at.
+        Addons::Query feedQuery;
+        std::vector<std::string> feedSources;
+        unsigned feedRevision = 0;
         std::vector<std::string> chosen = {"Modrinth", "CurseForge"};
         bool sourcesRestored = false;
         std::vector<Route> routes;
@@ -192,6 +197,13 @@ namespace DownloadsScreen {
 
         bool containsSource(const std::vector<Source>& list, Source value) {
             return std::find(list.begin(), list.end(), value) != list.end();
+        }
+
+        // The search fields that decide which results a search stands for; the page does not count.
+        bool sameSearch(const Addons::Query& a, const Addons::Query& b) {
+            return a.kind == b.kind && a.text == b.text && a.gameVersion == b.gameVersion && a.loaders == b.loaders &&
+                    a.categories == b.categories && a.curseCategories == b.curseCategories && a.client == b.client &&
+                    a.server == b.server && a.openSource == b.openSource && a.sort == b.sort;
         }
 
         void flip(std::vector<std::string>& list, const std::string& value) {
@@ -723,6 +735,8 @@ namespace DownloadsScreen {
                             if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
                                 query.text = Ui::trim(text);
                                 query.page = 0;
+                                // Enter searches again, so whatever the extension sent makes way for the results.
+                                PluginFeed::clear();
                             }
                         },
                         "搜索名称");
@@ -2062,9 +2076,21 @@ namespace DownloadsScreen {
         void resultsView(bool covered) {
             followTyping();
             std::vector<Source> sources = chosenSources();
+            bool feedKind = query.kind == Kind::Mod;
+            if (feedKind && feedRevision != PluginFeed::revision()) {
+                feedRevision = PluginFeed::revision();
+                feedQuery = query;
+                feedSources = chosen;
+                shown = ProjectBrowser::Merged();
+            }
+            // A list the extension sent stands for the search it arrived on; any change to that search leaves it.
+            bool feeding = feedKind && PluginFeed::active() && sameSearch(feedQuery, query) && feedSources == chosen;
+            if (feedKind && PluginFeed::active() && !feeding) {
+                PluginFeed::clear();
+            }
             Addons::Query base = query;
             bool translating = false;
-            if (ModNames::applies(query.kind)) {
+            if (!feeding && ModNames::applies(query.kind)) {
                 ModNames::Rewrite rewrite = ModNames::rewrite(query.text);
                 translating = rewrite.waiting;
                 base.text = rewrite.text;
@@ -2076,7 +2102,17 @@ namespace DownloadsScreen {
             float listBottom = pagesY - 8.0f;
 
             ProjectBrowser::Merged merged;
-            if (!sources.empty()) {
+            if (feeding) {
+                merged.status = PluginFeed::loading() ? Addons::Status::Loading : Addons::Status::Ready;
+                for (const auto& item : PluginFeed::items()) {
+                    ProjectBrowser::MergedHit row;
+                    row.hit = item.second;
+                    row.primary = item.first;
+                    row.found.push_back(ProjectBrowser::Found{item.first, item.second});
+                    merged.hits.push_back(std::move(row));
+                }
+                merged.total = (int) merged.hits.size();
+            } else if (!sources.empty()) {
                 std::vector<std::pair<Source, const Addons::Results*>> lists;
                 for (Source from : sources) {
                     lists.push_back({from, &Addons::search(from, queryFor(from, base))});
@@ -2084,27 +2120,28 @@ namespace DownloadsScreen {
                 merged = ProjectBrowser::merge(lists);
             }
             bool named = true;
-            if (merged.status == Addons::Status::Ready && ModNames::applies(query.kind) && !ModNames::original()) {
+            if (!feeding && merged.status == Addons::Status::Ready && ModNames::applies(query.kind) &&
+                !ModNames::original()) {
                 std::vector<Addons::Hit> hits;
                 for (const ProjectBrowser::MergedHit& row : merged.hits) {
                     hits.push_back(row.hit);
                 }
                 named = ModNames::resolved(hits);
             }
-            bool ready = merged.status == Addons::Status::Ready && named && !translating;
+            bool ready = merged.status == Addons::Status::Ready && (feeding || (named && !translating));
             if (ready) {
                 shown = merged;
             }
-            bool loading = merged.status != Addons::Status::Failed && (merged.status != Addons::Status::Ready ||
-                                                                     !named || translating);
+            bool loading = merged.status != Addons::Status::Failed &&
+                    (merged.status != Addons::Status::Ready || (!feeding && (!named || translating)));
 
             filters(y, shown.total, !shown.hits.empty() || ready, covered);
 
-            if (sources.empty()) {
+            if (sources.empty() && !feeding) {
                 message("请在上方选择至少一个来源", UiTheme::textMuted(), listTop, listBottom, false);
                 return;
             }
-            if (merged.status == Addons::Status::Failed) {
+            if (!feeding && merged.status == Addons::Status::Failed) {
                 message("搜索失败：" + merged.error, UiTheme::danger(), listTop, listBottom, false);
                 std::string retry = "重试";
                 float w = Page::buttonWidth(retry);
@@ -2118,9 +2155,11 @@ namespace DownloadsScreen {
             }
             if (shown.hits.empty()) {
                 if (loading) {
-                    message("正在搜索", UiTheme::textMuted(), listTop, listBottom, true);
+                    message(feeding ? "正在读取插件发送的内容" : "正在搜索", UiTheme::textMuted(), listTop, listBottom,
+                            true);
                 } else {
-                    message("没有找到符合条件的内容", UiTheme::textMuted(), listTop, listBottom, false);
+                    message(feeding ? "插件发送的项目都没找到" : "没有找到符合条件的内容", UiTheme::textMuted(),
+                            listTop, listBottom, false);
                 }
                 return;
             }
@@ -2311,6 +2350,8 @@ namespace DownloadsScreen {
         bool covered = NewUi::overlayCoversMouse();
         followPending();
         sidePanel(covered);
+        // The browser extension delivers to the mod page alone.
+        PluginFeed::shown(side == Side::Catalog && query.kind == Kind::Mod);
         sourceViews.begin();
         views.begin();
         if (side == Side::Java) {
