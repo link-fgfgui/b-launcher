@@ -1,0 +1,60 @@
+name: Sync fork with upstream
+
+# 每天 01:00 UTC（北京时间 09:00）检查上游 cubk1/b-launcher 的 master。
+# 上游有新提交时，把本仓库的提交 rebase 到上游最新提交上并强制推送；
+# rebase 冲突则中止且不推送任何内容，工作流直接失败。
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout fork master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/cubk1/b-launcher.git
+          git fetch --no-tags upstream master
+
+      - name: Check for upstream updates
+        id: check
+        run: |
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "上游没有新提交，无需操作"
+            echo "behind=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "上游有新提交："
+            git log --oneline HEAD..upstream/master
+            echo "behind=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebase onto upstream and push
+        if: steps.check.outputs.behind == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git rebase upstream/master; then
+            git rebase --abort || true
+            echo "::error::rebase 到 upstream/master 时发生冲突，已中止，未推送任何内容。"
+            exit 1
+          fi
+
+          echo "rebase 完成，推送以下提交："
+          git log --oneline upstream/master..HEAD
+          git push --force-with-lease origin HEAD:master
