@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: write
+  # 供最后一步手动触发 build 使用（GITHUB_TOKEN 推送不会触发 push 工作流）。
+  actions: write
 
 concurrency:
   group: sync-upstream
@@ -58,3 +60,10 @@ jobs:
           echo "rebase 完成，推送以下提交："
           git log --oneline upstream/master..HEAD
           git push --force-with-lease origin HEAD:master
+
+      # 用 GITHUB_TOKEN 推送不会触发 push 工作流，因此显式启动 master 的构建。
+      - name: Trigger build on master
+        if: steps.check.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build.yml --ref master --repo "${{ github.repository }}"
